@@ -268,7 +268,6 @@
 
     <script type="module">
         import * as THREE from 'three';
-        import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
         const container = document.getElementById('canvas-container');
@@ -283,7 +282,7 @@
         scene.background = null; 
 
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.set(0.0, 1.4, 2.5); // Refocused closely to frame a standard human model avatar
+        camera.position.set(0.0, 1.4, 2.5); 
         camera.lookAt(0, 1.2, 0);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -367,17 +366,21 @@
         waveGroup.add(ring);
 
         // ================================================================
-        // Lighting
+        // Lighting Model Setup (Replaces Broken EXR)
         // ================================================================
-        const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+        const ambient = new THREE.AmbientLight(0xffffff, 0.9);
         scene.add(ambient);
 
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-        dirLight.position.set(2, 4, 3);
-        scene.add(dirLight);
+        const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight1.position.set(2, 4, 4);
+        scene.add(dirLight1);
+
+        const dirLight2 = new THREE.DirectionalLight(0x4499ff, 0.6);
+        dirLight2.position.set(-2, 2, -2);
+        scene.add(dirLight2);
 
         // ================================================================
-        // Avatar (Loaded from Ready Player Me Asset)
+        // Avatar Loader
         // ================================================================
         const avatar = new THREE.Group();
         scene.add(avatar);
@@ -396,7 +399,6 @@
                     child.castShadow = true;
                     child.receiveShadow = true;
                 }
-                // Bind and target structural bone rig rules inside the avatar GLB
                 if (child.isBone && (child.name.includes('RightArm') || child.name.includes('mixamorigRightArm'))) {
                     rightArmBone = child;
                 }
@@ -460,7 +462,7 @@
         updateSquareText('🤖 Sailor Ambassador');
 
         // ================================================================
-        // Salute state
+        // Salute execution
         // ================================================================
         let targetArmZ = 0.0;
         let targetArmX = 0.0;
@@ -479,7 +481,6 @@
             const randomResponse = responses[Math.floor(Math.random() * responses.length)];
             updateSquareText(`🌊 ${randomResponse}`);
 
-            // Natural rotational variables mapped cleanly onto structural bones
             targetArmZ = -1.1;
             targetArmX = -0.9;
 
@@ -497,7 +498,7 @@
         }
 
         // ================================================================
-        // Camera Wave Detection
+        // Camera Wave Detection (Optimized readback performance)
         // ================================================================
         let lastActivationTime = 0;
         
@@ -510,7 +511,8 @@
                 await new Promise(resolve => video.onloadedmetadata = resolve);
 
                 const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
+                // Added willReadFrequently optimization parameter to accelerate image array lookup cycles
+                const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
                 function detect() {
                     if (video.readyState >= video.HAVE_ENOUGH_DATA) {
