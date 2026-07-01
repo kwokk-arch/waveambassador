@@ -380,7 +380,8 @@
         scene.add(dirLight2);
 
         // ================================================================
-        // Avatar Loader
+       // ================================================================
+        // Avatar Loader (With Auto-Scaling and Centering)
         // ================================================================
         const avatar = new THREE.Group();
         scene.add(avatar);
@@ -391,13 +392,30 @@
         gltfLoader.load('./assets/ready_player_me_female_avatar__vrchatgame.glb', (gltf) => {
             const model = gltf.scene;
             
-            model.scale.set(1.0, 1.0, 1.0); 
-            model.position.set(0, 0, 0); 
+            // 1. Calculate the real bounding box size of the avatar
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const center = box.getCenter(new THREE.Vector3());
+            
+            // 2. Automatically scale the avatar to fit neatly on screen (approx 1.6 meters tall)
+            const targetHeight = 1.6;
+            const scaleFactor = targetHeight / size.y;
+            model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+            
+            // 3. Center the model's feet perfectly at the origin (0,0,0)
+            model.position.x = -center.x * scaleFactor;
+            model.position.y = -box.min.y * scaleFactor;
+            model.position.z = -center.z * scaleFactor;
             
             model.traverse((child) => {
                 if (child.isMesh) {
                     child.castShadow = true;
                     child.receiveShadow = true;
+                    // Force the materials to render correctly with standard lighting
+                    if (child.material) {
+                        child.material.side = THREE.DoubleSide;
+                        child.material.needsUpdate = true;
+                    }
                 }
                 if (child.isBone && (child.name.includes('RightArm') || child.name.includes('mixamorigRightArm'))) {
                     rightArmBone = child;
@@ -405,10 +423,15 @@
             });
 
             avatar.add(model);
+            
+            // Place your floating UI square nicely relative to the new auto-scaled avatar head
+            if (square) {
+                square.position.set(0, targetHeight + 0.3, 0.2);
+            }
+            
         }, undefined, (error) => {
             console.error('An error happened while loading your model:', error);
         });
-
         // ================================================================
         // Rotating Info Square
         // ================================================================
