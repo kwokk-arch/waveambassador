@@ -368,8 +368,8 @@
         dirLight.position.set(2, 4, 3);
         scene.add(dirLight);
 
-        // ================================================================
-        // Avatar Loader
+       // ================================================================
+        // Avatar Loader (With Absolute Force-Visibility Fix)
         // ================================================================
         const avatar = new THREE.Group();
         scene.add(avatar);
@@ -392,19 +392,32 @@
             model.position.set(0, 0, 0); 
             
             model.traverse((child) => {
+                // Force visibility on absolutely everything inside the GLTF scene graph
+                child.visible = true;
+                
                 if (child.isMesh || child.isSkinnedMesh) {
                     child.frustumCulled = false; 
+                    
+                    // Force the meshes to render no matter what material structure they have
                     if (child.material) {
+                        child.material.visible = true;
+                        child.material.opacity = 1.0;
+                        child.material.transparent = false;
                         child.material.side = THREE.DoubleSide;
+                        
+                        // If it has a texture image map, preserve it using basic unlit shading
                         if (child.material.map) {
                             const tex = child.material.map;
                             child.material = new THREE.MeshBasicMaterial({
                                 map: tex,
-                                side: THREE.DoubleSide
+                                side: THREE.DoubleSide,
+                                transparent: false,
+                                opacity: 1.0
                             });
                         } else {
+                            // If no texture map exists, paint it with a visible solid gray/white
                             child.material = new THREE.MeshBasicMaterial({
-                                color: child.material.color || 0xcccccc,
+                                color: 0xdddddd,
                                 side: THREE.DoubleSide
                             });
                         }
