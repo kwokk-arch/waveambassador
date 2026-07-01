@@ -282,9 +282,8 @@
         scene.background = null; 
 
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-// Move the camera back to Z = 4.5 and raise it slightly
-camera.position.set(0.0, 1.6, 4.5); 
-camera.lookAt(0, 1.0, 0);
+        camera.position.set(0.0, 1.4, 3.2); 
+        camera.lookAt(0, 1.1, 0);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -292,7 +291,7 @@ camera.lookAt(0, 1.0, 0);
         container.appendChild(renderer.domElement);
 
         // ================================================================
-        // 3D SEA WAVE BACKGROUND
+        // 3D SEA WAVE BACKGROUND (MeshBasicMaterial for CORS/Shader stability)
         // ================================================================
         const waveGroup = new THREE.Group();
         scene.add(waveGroup);
@@ -303,7 +302,7 @@ camera.lookAt(0, 1.0, 0);
         const bandHeight = totalHeight / bandCount;
 
         for (let i = 0; i < bandCount; i++) {
-            const yOffset = -0.3 + i * bandHeight;
+            const yOffset = -0.4 + i * bandHeight;
             const color = new THREE.Color(seaColors[i % seaColors.length]);
             const segments = 40;
             const geometry = new THREE.BufferGeometry();
@@ -312,12 +311,12 @@ camera.lookAt(0, 1.0, 0);
 
             for (let j = 0; j <= segments; j++) {
                 const t = j / segments;
-                const x = -3.0 + t * 6.0;
+                const x = -3.5 + t * 7.0;
                 const waveOffset = Math.sin(t * Math.PI * 3 + i * 0.8) * 0.15 * (1 - i / bandCount * 0.5);
                 const y = yOffset + waveOffset;
                 
                 positions.push(x, y, -2.0);
-                positions.push(x, y + bandHeight * 0.9, -2.0);
+                positions.push(x, y + bandHeight * 0.85, -2.0);
                 uvs.push(t, 0);
                 uvs.push(t, 1);
             }
@@ -337,90 +336,68 @@ camera.lookAt(0, 1.0, 0);
             geometry.setIndex(indices);
             geometry.computeVertexNormals();
 
-            const material = new THREE.MeshStandardMaterial({
+            const material = new THREE.MeshBasicMaterial({
                 color: color,
-                roughness: 0.4,
-                metalness: 0.2,
                 transparent: true,
-                opacity: 0.85 - i * 0.05,
-                side: THREE.DoubleSide,
-                emissive: color,
-                emissiveIntensity: 0.1
+                opacity: 0.75 - i * 0.05,
+                side: THREE.DoubleSide
             });
 
             const band = new THREE.Mesh(geometry, material);
-            band.receiveShadow = true;
             waveGroup.add(band);
         }
 
-        const ringGeo = new THREE.RingGeometry(1.1, 1.2, 48);
-        const ringMat = new THREE.MeshStandardMaterial({
+        const ringGeo = new THREE.RingGeometry(1.1, 1.15, 48);
+        const ringMat = new THREE.MeshBasicMaterial({
             color: 0x4499ff,
             transparent: true,
-            opacity: 0.15,
-            side: THREE.DoubleSide,
-            emissive: 0x4499ff,
-            emissiveIntensity: 0.2
+            opacity: 0.3,
+            side: THREE.DoubleSide
         });
         const ring = new THREE.Mesh(ringGeo, ringMat);
-        ring.position.set(0, 1.0, -2.1);
+        ring.position.set(0, 1.1, -2.1);
         waveGroup.add(ring);
 
         // ================================================================
-// Ambient light to illuminate the shadows
+        // Lighting Setup
         // ================================================================
-const ambient = new THREE.AmbientLight(0xffffff, 2.5);
-scene.add(ambient);
+        const ambient = new THREE.AmbientLight(0xffffff, 1.2);
+        scene.add(ambient);
 
-// Strong key light from the front-right
-const dirLight1 = new THREE.DirectionalLight(0xffffff, 3.0);
-dirLight1.position.set(3, 5, 4);
-scene.add(dirLight1);
-
-// Fill light from the left side to bring out textures
-const dirLight2 = new THREE.DirectionalLight(0x4499ff, 1.5);
-dirLight2.position.set(-3, 3, 2);
-scene.add(dirLight2);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(2, 4, 3);
+        scene.add(dirLight);
 
         // ================================================================
-       // ================================================================
-        // ================================================================
-        // Avatar Loader (With SkinnedMesh Shadow & Culling Fix)
+        // Avatar Loader with Visual Verification Fallback
         // ================================================================
         const avatar = new THREE.Group();
         scene.add(avatar);
 
         let rightArmBone = null; 
 
+        // 1. Instantly create temporary procedural hand indicators so screen is never blank
+        const fallbackMesh = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.2, 0.3, 1.4, 16),
+            new THREE.MeshBasicMaterial({ color: 0x00aa55, wireframe: true })
+        );
+        fallbackMesh.position.y = 0.7;
+        avatar.add(fallbackMesh);
+
         const gltfLoader = new GLTFLoader();
         gltfLoader.load('./assets/ready_player_me_female_avatar__vrchatgame.glb', (gltf) => {
+            // Remove fallback indicator once file mounts safely
+            avatar.remove(fallbackMesh);
+            
             const model = gltf.scene;
-            
-            // Calculate the size to auto-scale it nicely
-            const box = new THREE.Box3().setFromObject(model);
-            const size = box.getSize(new THREE.Vector3());
-            const center = box.getCenter(new THREE.Vector3());
-            
-            const targetHeight = 1.6;
-            const scaleFactor = targetHeight / size.y;
-            model.scale.set(scaleFactor, scaleFactor, scaleFactor);
-            
-            // Position the model's feet on the floor
-            model.position.x = -center.x * scaleFactor;
-            model.position.y = -box.min.y * scaleFactor;
-            model.position.z = -center.z * scaleFactor;
+            model.scale.set(0.95, 0.95, 0.95); 
+            model.position.set(0, 0, 0); 
             
             model.traverse((child) => {
                 if (child.isMesh || child.isSkinnedMesh) {
-                    child.castShadow = true;
-                    child.receiveShadow = true;
-                    
-                    // CRITICAL FIX: Disable frustum culling so the skinned body bones don't vanish
                     child.frustumCulled = false; 
-                    
                     if (child.material) {
                         child.material.side = THREE.DoubleSide;
-                        child.material.needsUpdate = true;
                     }
                 }
                 if (child.isBone && (child.name.includes('RightArm') || child.name.includes('mixamorigRightArm'))) {
@@ -429,15 +406,11 @@ scene.add(dirLight2);
             });
 
             avatar.add(model);
-            
-            if (square) {
-                square.position.set(0, targetHeight + 0.3, 0.2);
-            }
-            
         }, undefined, (error) => {
-            console.error('An error happened while loading your model:', error);
+            console.error('File load error handler fallback context:', error);
         });
-        ================================
+
+        // ================================================================
         // Rotating Info Square
         // ================================================================
         const squareCanvas = document.createElement('canvas');
@@ -476,21 +449,17 @@ scene.add(dirLight2);
         }
 
         const squareTexture = new THREE.CanvasTexture(squareCanvas);
-        const squareMat = new THREE.MeshStandardMaterial({
+        const squareMat = new THREE.MeshBasicMaterial({
             map: squareTexture,
-            emissive: 0xfe5722,
-            emissiveIntensity: 0.15,
-            metalness: 0.3,
-            roughness: 0.2,
             side: THREE.DoubleSide
         });
-        const square = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.04), squareMat);
-        square.position.set(0, 1.9, 0.1); 
+        const square = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.45, 0.02), squareMat);
+        square.position.set(0, 1.85, 0.3); 
         avatar.add(square);
         updateSquareText('🤖 Sailor Ambassador');
 
         // ================================================================
-        // Salute execution
+        // Salute State Variables
         // ================================================================
         let targetArmZ = 0.0;
         let targetArmX = 0.0;
@@ -526,7 +495,7 @@ scene.add(dirLight2);
         }
 
         // ================================================================
-        // Camera Wave Detection (Optimized readback performance)
+        // Camera Wave Detection
         // ================================================================
         let lastActivationTime = 0;
         
@@ -539,7 +508,6 @@ scene.add(dirLight2);
                 await new Promise(resolve => video.onloadedmetadata = resolve);
 
                 const canvas = document.createElement('canvas');
-                // Added willReadFrequently optimization parameter to accelerate image array lookup cycles
                 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
                 function detect() {
@@ -593,9 +561,9 @@ scene.add(dirLight2);
             square.rotation.x = Math.sin(time * 0.7) * 0.25;
 
             waveGroup.children.forEach((child, index) => {
-                if (child.isMesh && child.material.color) {
+                if (child.geometry && child !== ring) {
                     const offset = index * 0.3;
-                    child.position.z = Math.sin(time * 0.5 + offset) * 0.05;
+                    child.position.z = Math.sin(time * 0.5 + offset) * 0.04;
                 }
             });
 
@@ -605,7 +573,7 @@ scene.add(dirLight2);
                 rightArmBone.rotation.x += (targetArmX - rightArmBone.rotation.x) * speed;
             }
 
-            avatar.position.y = Math.sin(time * 1.8) * 0.01;
+            avatar.position.y = Math.sin(time * 1.8) * 0.008;
 
             renderer.render(scene, camera);
         }
