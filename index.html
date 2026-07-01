@@ -282,8 +282,9 @@
         scene.background = null; 
 
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.set(0.0, 1.4, 2.5); 
-        camera.lookAt(0, 1.2, 0);
+// Move the camera back to Z = 4.5 and raise it slightly
+camera.position.set(0.0, 1.6, 4.5); 
+camera.lookAt(0, 1.0, 0);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -366,18 +367,20 @@
         waveGroup.add(ring);
 
         // ================================================================
-        // Lighting Model Setup (Replaces Broken EXR)
+// Ambient light to illuminate the shadows
         // ================================================================
-        const ambient = new THREE.AmbientLight(0xffffff, 0.9);
-        scene.add(ambient);
+const ambient = new THREE.AmbientLight(0xffffff, 2.5);
+scene.add(ambient);
 
-        const dirLight1 = new THREE.DirectionalLight(0xffffff, 1.5);
-        dirLight1.position.set(2, 4, 4);
-        scene.add(dirLight1);
+// Strong key light from the front-right
+const dirLight1 = new THREE.DirectionalLight(0xffffff, 3.0);
+dirLight1.position.set(3, 5, 4);
+scene.add(dirLight1);
 
-        const dirLight2 = new THREE.DirectionalLight(0x4499ff, 0.6);
-        dirLight2.position.set(-2, 2, -2);
-        scene.add(dirLight2);
+// Fill light from the left side to bring out textures
+const dirLight2 = new THREE.DirectionalLight(0x4499ff, 1.5);
+dirLight2.position.set(-3, 3, 2);
+scene.add(dirLight2);
 
         // ================================================================
        // ================================================================
@@ -480,7 +483,7 @@
             side: THREE.DoubleSide
         });
         const square = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.04), squareMat);
-        square.position.set(0, 1.9, 0.4); 
+        square.position.set(0, 1.9, 0.1); 
         avatar.add(square);
         updateSquareText('🤖 Sailor Ambassador');
 
