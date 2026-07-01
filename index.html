@@ -384,7 +384,8 @@ scene.add(dirLight2);
 
         // ================================================================
        // ================================================================
-        // Avatar Loader (With Auto-Scaling and Centering)
+        // ================================================================
+        // Avatar Loader (With SkinnedMesh Shadow & Culling Fix)
         // ================================================================
         const avatar = new THREE.Group();
         scene.add(avatar);
@@ -395,26 +396,28 @@ scene.add(dirLight2);
         gltfLoader.load('./assets/ready_player_me_female_avatar__vrchatgame.glb', (gltf) => {
             const model = gltf.scene;
             
-            // 1. Calculate the real bounding box size of the avatar
+            // Calculate the size to auto-scale it nicely
             const box = new THREE.Box3().setFromObject(model);
             const size = box.getSize(new THREE.Vector3());
             const center = box.getCenter(new THREE.Vector3());
             
-            // 2. Automatically scale the avatar to fit neatly on screen (approx 1.6 meters tall)
             const targetHeight = 1.6;
             const scaleFactor = targetHeight / size.y;
             model.scale.set(scaleFactor, scaleFactor, scaleFactor);
             
-            // 3. Center the model's feet perfectly at the origin (0,0,0)
+            // Position the model's feet on the floor
             model.position.x = -center.x * scaleFactor;
             model.position.y = -box.min.y * scaleFactor;
             model.position.z = -center.z * scaleFactor;
             
             model.traverse((child) => {
-                if (child.isMesh) {
+                if (child.isMesh || child.isSkinnedMesh) {
                     child.castShadow = true;
                     child.receiveShadow = true;
-                    // Force the materials to render correctly with standard lighting
+                    
+                    // CRITICAL FIX: Disable frustum culling so the skinned body bones don't vanish
+                    child.frustumCulled = false; 
+                    
                     if (child.material) {
                         child.material.side = THREE.DoubleSide;
                         child.material.needsUpdate = true;
@@ -427,7 +430,6 @@ scene.add(dirLight2);
 
             avatar.add(model);
             
-            // Place your floating UI square nicely relative to the new auto-scaled avatar head
             if (square) {
                 square.position.set(0, targetHeight + 0.3, 0.2);
             }
@@ -435,7 +437,7 @@ scene.add(dirLight2);
         }, undefined, (error) => {
             console.error('An error happened while loading your model:', error);
         });
-        // ================================================================
+        ================================
         // Rotating Info Square
         // ================================================================
         const squareCanvas = document.createElement('canvas');
