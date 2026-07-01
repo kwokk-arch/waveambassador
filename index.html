@@ -385,8 +385,23 @@
         avatar.add(fallbackMesh);
 
         const gltfLoader = new GLTFLoader();
+       // ================================================================
+        // Avatar Loader (With Material Force-Visibility Fix)
+        // ================================================================
+        const avatar = new THREE.Group();
+        scene.add(avatar);
+
+        let rightArmBone = null; 
+
+        const fallbackMesh = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.2, 0.3, 1.4, 16),
+            new THREE.MeshBasicMaterial({ color: 0x00aa55, wireframe: true })
+        );
+        fallbackMesh.position.y = 0.7;
+        avatar.add(fallbackMesh);
+
+        const gltfLoader = new GLTFLoader();
         gltfLoader.load('./assets/ready_player_me_female_avatar__vrchatgame.glb', (gltf) => {
-            // Remove fallback indicator once file mounts safely
             avatar.remove(fallbackMesh);
             
             const model = gltf.scene;
@@ -396,8 +411,27 @@
             model.traverse((child) => {
                 if (child.isMesh || child.isSkinnedMesh) {
                     child.frustumCulled = false; 
+                    
+                    // CRITICAL FIX: Convert PBR materials to self-illuminating materials 
+                    // so they don't render as pitch black or invisible against the dark sky background
                     if (child.material) {
                         child.material.side = THREE.DoubleSide;
+                        
+                        // If the model is using a basic map texture, preserve it while forcing visibility
+                        if (child.material.map) {
+                            const tex = child.material.map;
+                            child.material = new THREE.MeshBasicMaterial({
+                                map: tex,
+                                side: THREE.DoubleSide
+                            });
+                        } else {
+                            // Bright fallback solid color if individual textures fail to bind
+                            child.material = new THREE.MeshBasicMaterial({
+                                color: child.material.color || 0xcccccc,
+                                side: THREE.DoubleSide
+                            });
+                        }
+                        child.material.needsUpdate = true;
                     }
                 }
                 if (child.isBone && (child.name.includes('RightArm') || child.name.includes('mixamorigRightArm'))) {
