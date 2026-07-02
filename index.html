@@ -69,13 +69,13 @@
     <div id="canvas-container"></div>
 
     <div id="hud">
-        <div class="hud-item"><span class="label">Ambassador</span><span class="value orange">⛵ Sailor</span></div>
-        <div class="hud-item"><span class="label">Status</span><span id="hud-status" class="value green">● Ready</span></div>
+        <div class="hud-item"><span class="label">Ambassador</span><span class="value orange">&#9973; Sailor</span></div>
+        <div class="hud-item"><span class="label">Status</span><span id="hud-status" class="value green">&#9679; Ready</span></div>
         <div class="hud-item"><span class="label">Total Participation</span><span id="hud-count" class="value blue">0</span></div>
     </div>
 
     <div id="bottom-info">
-        <div class="title">🤖 Ambassador Ready</div>
+        <div class="title">&#129302; Ambassador Ready</div>
         <div class="desc">Wave your physical hand or move your mouse to deform the silk threads and interact with the avatar!</div>
         <ul class="gesture-list">
             <li><strong>We Adapt</strong> — Wave your hand across your webcam</li>
@@ -113,9 +113,6 @@
 
         // ================================================================
         // SINGLE WebGL Renderer — fixes avatar disappearing (context loss)
-        // Previously two separate WebGL contexts (OGL + Three.js) competed
-        // for GPU resources; the browser would evict one after a few seconds.
-        // Now everything runs in ONE Three.js renderer.
         // ================================================================
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -123,108 +120,194 @@
         renderer.autoClear = false;
         container.appendChild(renderer.domElement);
 
-        // Safety: handle rare context loss gracefully
+        // Safety: handle context loss gracefully
+        let contextLost = false;
         renderer.domElement.addEventListener('webglcontextlost', (e) => {
             e.preventDefault();
-            console.warn('WebGL context lost — waiting for restore…');
+            contextLost = true;
+            console.warn('WebGL context lost — waiting for restore...');
         });
         renderer.domElement.addEventListener('webglcontextrestored', () => {
+            contextLost = false;
             console.log('WebGL context restored');
             resize();
         });
 
+        // Detect WebGL version for shader compatibility
+        const isWebGL2 = renderer.capabilities.isWebGL2;
+
         // ================================================================
-        // Background Silk Threads — ported from OGL to Three.js ShaderMaterial
-        // Rendered as a full-screen quad in a separate scene pass.
+        // Background Silk Threads — using RawShaderMaterial
+        // RawShaderMaterial bypasses Three.js shader preprocessing entirely,
+        // preventing the GLSL conversion bugs that caused context loss.
         // ================================================================
         const bgScene = new THREE.Scene();
         const bgCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-        const silkVertexShader = `
-        varying vec2 vUv;
-        void main() {
-            vUv = uv;
-            gl_Position = vec4(position.xy, 0.0, 1.0);
-        }
-        `;
+        // ---- GLSL 300 es shaders (WebGL2) ----
+        const silkVertexShader300 = `#version 300 es
+in vec3 position;
+void main() {
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+}`;
 
-        const silkFragmentShader = `
-        precision highp float;
-        uniform float iTime;
-        uniform vec3 iResolution;
-        uniform vec3 uColor;
-        uniform float uAmplitude;
-        uniform float uDistance;
-        uniform vec2 uMouse;
+        const silkFragmentShader300 = `#version 300 es
+precision highp float;
 
-        #define PI 3.1415926538
-        const int u_line_count = 40;
-        const float u_line_width = 7.0;
-        const float u_line_blur = 10.0;
+uniform float iTime;
+uniform vec3 iResolution;
+uniform vec3 uColor;
+uniform float uAmplitude;
+uniform float uDistance;
+uniform vec2 uMouse;
 
-        float Perlin2D(vec2 P) {
-            vec2 Pi = floor(P);
-            vec4 Pf_Pfmin1 = P.xyxy - vec4(Pi, Pi + 1.0);
-            vec4 Pt = vec4(Pi.xy, Pi.xy + 1.0);
-            Pt = Pt - floor(Pt * (1.0 / 71.0)) * 71.0;
-            Pt += vec2(26.0, 161.0).xyxy;
-            Pt *= Pt;
-            Pt = Pt.xzxz * Pt.yyww;
-            vec4 hash_x = fract(Pt * (1.0 / 951.135664));
-            vec4 hash_y = fract(Pt * (1.0 / 642.949883));
-            vec4 grad_x = hash_x - 0.49999;
-            vec4 grad_y = hash_y - 0.49999;
-            vec4 grad_results = inversesqrt(grad_x * grad_x + grad_y * grad_y)
-                * (grad_x * Pf_Pfmin1.xzxz + grad_y * Pf_Pfmin1.yyww);
-            grad_results *= 1.4142135623730950;
-            vec2 blend = Pf_Pfmin1.xy * Pf_Pfmin1.xy * Pf_Pfmin1.xy
-                * (Pf_Pfmin1.xy * (Pf_Pfmin1.xy * 6.0 - 15.0) + 10.0);
-            vec4 blend2 = vec4(blend, vec2(1.0 - blend));
-            return dot(grad_results, blend2.zxzx * blend2.wwyy);
-        }
+out vec4 outColor;
 
-        float pixel(float count, vec2 resolution) {
-            return (1.0 / max(resolution.x, resolution.y)) * count;
-        }
+#define PI 3.1415926538
+const int u_line_count = 40;
+const float u_line_width = 7.0;
+const float u_line_blur = 10.0;
 
-        float lineFn(vec2 st, float width, float perc, float offset, vec2 mouse, float time, float amplitude, float distance) {
-            float split_offset = (perc * 0.4);
-            float split_point = 0.1 + split_offset;
-            float amplitude_normal = smoothstep(split_point, 0.7, st.x);
-            float amplitude_strength = 0.5;
-            float finalAmplitude = amplitude_normal * amplitude_strength * amplitude * (1.0 + (mouse.y - 0.5) * 0.2);
-            float time_scaled = time / 10.0 + (mouse.x - 0.5) * 1.0;
-            float blur = smoothstep(split_point, split_point + 0.05, st.x) * perc;
+float Perlin2D(vec2 P) {
+    vec2 Pi = floor(P);
+    vec4 Pf_Pfmin1 = P.xyxy - vec4(Pi, Pi + 1.0);
+    vec4 Pt = vec4(Pi.xy, Pi.xy + 1.0);
+    Pt = Pt - floor(Pt * (1.0 / 71.0)) * 71.0;
+    Pt += vec2(26.0, 161.0).xyxy;
+    Pt *= Pt;
+    Pt = Pt.xzxz * Pt.yyww;
+    vec4 hash_x = fract(Pt * (1.0 / 951.135664));
+    vec4 hash_y = fract(Pt * (1.0 / 642.949883));
+    vec4 grad_x = hash_x - 0.49999;
+    vec4 grad_y = hash_y - 0.49999;
+    vec4 grad_results = inversesqrt(grad_x * grad_x + grad_y * grad_y)
+        * (grad_x * Pf_Pfmin1.xzxz + grad_y * Pf_Pfmin1.yyww);
+    grad_results *= 1.4142135623730950;
+    vec2 blend = Pf_Pfmin1.xy * Pf_Pfmin1.xy * Pf_Pfmin1.xy
+        * (Pf_Pfmin1.xy * (Pf_Pfmin1.xy * 6.0 - 15.0) + 10.0);
+    vec4 blend2 = vec4(blend, vec2(1.0 - blend));
+    return dot(grad_results, blend2.zxzx * blend2.wwyy);
+}
 
-            float xnoise = mix(
-                Perlin2D(vec2(time_scaled, st.x + perc) * 2.5),
-                Perlin2D(vec2(time_scaled, st.x + time_scaled) * 3.5) / 1.5,
-                st.x * 0.3
-            );
+float pixelSize(float count, vec2 resolution) {
+    return (1.0 / max(resolution.x, resolution.y)) * count;
+}
 
-            float y = 0.5 + (perc - 0.5) * distance + xnoise / 2.0 * finalAmplitude;
-            float line_start = smoothstep(y + (width / 2.0) + (u_line_blur * pixel(1.0, iResolution.xy) * blur), y, st.y);
-            float line_end = smoothstep(y, y - (width / 2.0) - (u_line_blur * pixel(1.0, iResolution.xy) * blur), st.y);
+float lineFn(vec2 st, float width, float perc, float offset, vec2 mouse, float time, float amplitude, float dist) {
+    float split_offset = (perc * 0.4);
+    float split_point = 0.1 + split_offset;
+    float amplitude_normal = smoothstep(split_point, 0.7, st.x);
+    float amplitude_strength = 0.5;
+    float finalAmplitude = amplitude_normal * amplitude_strength * amplitude * (1.0 + (mouse.y - 0.5) * 0.2);
+    float time_scaled = time / 10.0 + (mouse.x - 0.5) * 1.0;
+    float blur = smoothstep(split_point, split_point + 0.05, st.x) * perc;
 
-            return clamp((line_start - line_end) * (1.0 - smoothstep(0.0, 1.0, pow(perc, 0.3))), 0.0, 1.0);
-        }
+    float xnoise = mix(
+        Perlin2D(vec2(time_scaled, st.x + perc) * 2.5),
+        Perlin2D(vec2(time_scaled, st.x + time_scaled) * 3.5) / 1.5,
+        st.x * 0.3
+    );
 
-        void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-            vec2 uv = fragCoord / iResolution.xy;
-            float line_strength = 1.0;
-            for (int i = 0; i < u_line_count; i++) {
-                float p = float(i) / float(u_line_count);
-                line_strength *= (1.0 - lineFn(uv, u_line_width * pixel(1.0, iResolution.xy) * (1.0 - p), p, (PI * 1.0) * p, uMouse, iTime, uAmplitude, uDistance));
-            }
-            float colorVal = 1.0 - line_strength;
-            vec3 customBgColor = vec3(0.039, 0.067, 0.157);
-            fragColor = vec4(mix(customBgColor, uColor, colorVal), 1.0);
-        }
+    float y = 0.5 + (perc - 0.5) * dist + xnoise / 2.0 * finalAmplitude;
+    float line_start = smoothstep(y + (width / 2.0) + (u_line_blur * pixelSize(1.0, iResolution.xy) * blur), y, st.y);
+    float line_end = smoothstep(y, y - (width / 2.0) - (u_line_blur * pixelSize(1.0, iResolution.xy) * blur), st.y);
 
-        void main() {
-            mainImage(gl_FragColor, gl_FragCoord.xy);
-        }
-        `;
+    return clamp((line_start - line_end) * (1.0 - smoothstep(0.0, 1.0, pow(perc, 0.3))), 0.0, 1.0);
+}
+
+void main() {
+    vec2 uv = gl_FragCoord.xy / iResolution.xy;
+    float line_strength = 1.0;
+    for (int i = 0; i < u_line_count; i++) {
+        float p = float(i) / float(u_line_count);
+        line_strength *= (1.0 - lineFn(uv, u_line_width * pixelSize(1.0, iResolution.xy) * (1.0 - p), p, (PI * 1.0) * p, uMouse, iTime, uAmplitude, uDistance));
+    }
+    float colorVal = 1.0 - line_strength;
+    vec3 customBgColor = vec3(0.039, 0.067, 0.157);
+    outColor = vec4(mix(customBgColor, uColor, colorVal), 1.0);
+}`;
+
+        // ---- GLSL 100 fallback shaders (WebGL1) ----
+        const silkVertexShader100 = `
+precision highp float;
+attribute vec3 position;
+void main() {
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+}`;
+
+        const silkFragmentShader100 = `
+precision highp float;
+
+uniform float iTime;
+uniform vec3 iResolution;
+uniform vec3 uColor;
+uniform float uAmplitude;
+uniform float uDistance;
+uniform vec2 uMouse;
+
+#define PI 3.1415926538
+const int u_line_count = 40;
+const float u_line_width = 7.0;
+const float u_line_blur = 10.0;
+
+float Perlin2D(vec2 P) {
+    vec2 Pi = floor(P);
+    vec4 Pf_Pfmin1 = P.xyxy - vec4(Pi, Pi + 1.0);
+    vec4 Pt = vec4(Pi.xy, Pi.xy + 1.0);
+    Pt = Pt - floor(Pt * (1.0 / 71.0)) * 71.0;
+    Pt += vec2(26.0, 161.0).xyxy;
+    Pt *= Pt;
+    Pt = Pt.xzxz * Pt.yyww;
+    vec4 hash_x = fract(Pt * (1.0 / 951.135664));
+    vec4 hash_y = fract(Pt * (1.0 / 642.949883));
+    vec4 grad_x = hash_x - 0.49999;
+    vec4 grad_y = hash_y - 0.49999;
+    vec4 grad_results = inversesqrt(grad_x * grad_x + grad_y * grad_y)
+        * (grad_x * Pf_Pfmin1.xzxz + grad_y * Pf_Pfmin1.yyww);
+    grad_results *= 1.4142135623730950;
+    vec2 blend = Pf_Pfmin1.xy * Pf_Pfmin1.xy * Pf_Pfmin1.xy
+        * (Pf_Pfmin1.xy * (Pf_Pfmin1.xy * 6.0 - 15.0) + 10.0);
+    vec4 blend2 = vec4(blend, vec2(1.0 - blend));
+    return dot(grad_results, blend2.zxzx * blend2.wwyy);
+}
+
+float pixelSize(float count, vec2 resolution) {
+    return (1.0 / max(resolution.x, resolution.y)) * count;
+}
+
+float lineFn(vec2 st, float width, float perc, float offset, vec2 mouse, float time, float amplitude, float dist) {
+    float split_offset = (perc * 0.4);
+    float split_point = 0.1 + split_offset;
+    float amplitude_normal = smoothstep(split_point, 0.7, st.x);
+    float amplitude_strength = 0.5;
+    float finalAmplitude = amplitude_normal * amplitude_strength * amplitude * (1.0 + (mouse.y - 0.5) * 0.2);
+    float time_scaled = time / 10.0 + (mouse.x - 0.5) * 1.0;
+    float blur = smoothstep(split_point, split_point + 0.05, st.x) * perc;
+
+    float xnoise = mix(
+        Perlin2D(vec2(time_scaled, st.x + perc) * 2.5),
+        Perlin2D(vec2(time_scaled, st.x + time_scaled) * 3.5) / 1.5,
+        st.x * 0.3
+    );
+
+    float y = 0.5 + (perc - 0.5) * dist + xnoise / 2.0 * finalAmplitude;
+    float line_start = smoothstep(y + (width / 2.0) + (u_line_blur * pixelSize(1.0, iResolution.xy) * blur), y, st.y);
+    float line_end = smoothstep(y, y - (width / 2.0) - (u_line_blur * pixelSize(1.0, iResolution.xy) * blur), st.y);
+
+    return clamp((line_start - line_end) * (1.0 - smoothstep(0.0, 1.0, pow(perc, 0.3))), 0.0, 1.0);
+}
+
+void main() {
+    vec2 uv = gl_FragCoord.xy / iResolution.xy;
+    float line_strength = 1.0;
+    for (int i = 0; i < u_line_count; i++) {
+        float p = float(i) / float(u_line_count);
+        line_strength *= (1.0 - lineFn(uv, u_line_width * pixelSize(1.0, iResolution.xy) * (1.0 - p), p, (PI * 1.0) * p, uMouse, iTime, uAmplitude, uDistance));
+    }
+    float colorVal = 1.0 - line_strength;
+    vec3 customBgColor = vec3(0.039, 0.067, 0.157);
+    gl_FragColor = vec4(mix(customBgColor, uColor, colorVal), 1.0);
+}`;
 
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const silkUniforms = {
@@ -236,9 +319,14 @@
             uMouse:      { value: new THREE.Vector2(0.5, 0.5) }
         };
 
-        const bgMaterial = new THREE.ShaderMaterial({
-            vertexShader: silkVertexShader,
-            fragmentShader: silkFragmentShader,
+        // Use RawShaderMaterial — bypasses Three.js's GLSL auto-conversion
+        // that was mangling the shader and causing "program not valid" errors.
+        // NOTE: Do NOT set glslVersion here — our shaders already include
+        // #version 300 es. Setting glslVersion: THREE.GLSL3 would cause
+        // Three.js to prepend a DUPLICATE #version, which is a fatal error.
+        const bgMaterial = new THREE.RawShaderMaterial({
+            vertexShader:   isWebGL2 ? silkVertexShader300 : silkVertexShader100,
+            fragmentShader: isWebGL2 ? silkFragmentShader300 : silkFragmentShader100,
             uniforms: silkUniforms,
             depthWrite: false,
             depthTest: false
@@ -250,7 +338,6 @@
         // Main 3D Scene (avatar, wave bands, info square)
         // ================================================================
         const scene = new THREE.Scene();
-        // No scene.background — stays transparent so silk threads show through
 
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
         camera.position.set(0.0, 1.4, 3.2);
@@ -415,7 +502,7 @@
             sqCtx.textAlign = 'center';
             sqCtx.textBaseline = 'middle';
 
-            const lines = text.split(' — ');
+            const lines = text.split(' \u2014 ');
             if (lines.length > 1) {
                 sqCtx.font = 'Bold 44px "Segoe UI", sans-serif';
                 sqCtx.fillStyle = '#ffffff';
@@ -439,7 +526,7 @@
         const square = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.45, 0.02), squareMat);
         square.position.set(0, 1.85, 0.3);
         avatar.add(square);
-        updateSquareText('🤖 Sailor Ambassador');
+        updateSquareText('\ud83e\udd16 Sailor Ambassador');
 
         // ================================================================
         // Salute State
@@ -454,12 +541,12 @@
 
             activationCount++;
             hudCount.textContent = activationCount;
-            hudStatus.textContent = '● Activated!';
+            hudStatus.textContent = '\u25cf Activated!';
             hudStatus.className = 'value orange';
 
             const responses = ['We Adapt', 'We Serve', 'We Run', 'We Commit', 'We Humble'];
             const randomResponse = responses[Math.floor(Math.random() * responses.length)];
-            updateSquareText(`🌊 ${randomResponse}`);
+            updateSquareText('\ud83c\udf0a ' + randomResponse);
 
             targetArmZ = -1.1;
             targetArmX = -0.9;
@@ -470,9 +557,9 @@
                 setTimeout(() => {
                     isSaluting = false;
                     isProcessing = false;
-                    hudStatus.textContent = '● Ready';
+                    hudStatus.textContent = '\u25cf Ready';
                     hudStatus.className = 'value green';
-                    setTimeout(() => updateSquareText('🤖 Sailor Ambassador'), 2000);
+                    setTimeout(() => updateSquareText('\ud83e\udd16 Sailor Ambassador'), 2000);
                 }, 400);
             }, 1800);
         }
@@ -489,6 +576,9 @@
                 video.srcObject = stream;
                 video.play();
                 await new Promise(resolve => video.onloadedmetadata = resolve);
+
+                hudStatus.textContent = '\u25cf Camera On';
+                hudStatus.className = 'value green';
 
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -525,14 +615,14 @@
                 }
                 detect();
             } catch (e) {
-                hudStatus.textContent = '● Camera Off';
+                hudStatus.textContent = '\u25cf Camera Off';
                 hudStatus.className = 'value red';
             }
         }
         setupWaveDetection();
 
         // ================================================================
-        // Mouse Input (unified — no separate OGL container needed)
+        // Mouse Input
         // ================================================================
         let currentMouse = [0.5, 0.5];
 
@@ -549,6 +639,11 @@
             }
         });
 
+        // Click on canvas triggers activation
+        renderer.domElement.addEventListener('click', () => {
+            performActivation();
+        });
+
         // ================================================================
         // Resize Handler
         // ================================================================
@@ -560,7 +655,6 @@
             renderer.setSize(width, height);
             renderer.setPixelRatio(currentDpr);
 
-            // Update silk thread resolution uniform (needs actual pixel dimensions)
             silkUniforms.iResolution.value.set(
                 width * currentDpr,
                 height * currentDpr,
@@ -579,6 +673,10 @@
 
         function animate(timestamp) {
             requestAnimationFrame(animate);
+
+            // Skip rendering if context is lost
+            if (contextLost) return;
+
             time += 0.016;
 
             // Smooth mouse interpolation
@@ -612,10 +710,10 @@
             avatar.position.y = Math.sin(time * 1.8) * 0.008;
 
             // ── Render: two passes, ONE context ──
-            renderer.clear(true, true, true);           // Clear color + depth + stencil
-            renderer.render(bgScene, bgCamera);          // Pass 1: silk thread background
-            renderer.clearDepth();                       // Clear depth so 3D scene renders on top
-            renderer.render(scene, camera);              // Pass 2: avatar + wave bands + HUD cubes
+            renderer.clear(true, true, true);
+            renderer.render(bgScene, bgCamera);
+            renderer.clearDepth();
+            renderer.render(scene, camera);
         }
         requestAnimationFrame(animate);
     </script>
